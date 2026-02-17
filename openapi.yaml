@@ -1,0 +1,461 @@
+openapi: 3.0.3
+info:
+  title: High School Math Learning API
+  version: 1.0.0
+  description: |
+    高校数学 1A・2B・2C 学習Webアプリ向けAPI。
+    単元は自由選択、単元内は導入→例題→演習→確認テストの順で進行。
+servers:
+  - url: https://api.example.com
+security:
+  - bearerAuth: []
+paths:
+  /api/v1/auth/signup:
+    post:
+      summary: メール新規登録
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignupRequest'
+      responses:
+        '200':
+          description: 登録成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+  /api/v1/auth/login:
+    post:
+      summary: メールログイン
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: ログイン成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+  /api/v1/auth/oauth:
+    post:
+      summary: OAuthログイン
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OAuthRequest'
+      responses:
+        '200':
+          description: ログイン成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+  /api/v1/home:
+    get:
+      summary: ホーム情報取得
+      responses:
+        '200':
+          description: 取得成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HomeResponse'
+  /api/v1/recommendations/today:
+    get:
+      summary: 今日のおすすめ問題（ランダム）
+      parameters:
+        - in: query
+          name: count
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 10
+            default: 3
+      responses:
+        '200':
+          description: 取得成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecommendationResponse'
+  /api/v1/units:
+    get:
+      summary: 単元一覧取得
+      parameters:
+        - in: query
+          name: subject
+          schema:
+            type: string
+            enum: ["1A", "2B", "2C"]
+      responses:
+        '200':
+          description: 取得成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnitsResponse'
+  /api/v1/units/{unitId}/start:
+    post:
+      summary: 単元開始（Step1から）
+      parameters:
+        - in: path
+          name: unitId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 開始成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnitStartResponse'
+  /api/v1/questions/{questionId}/answer:
+    post:
+      summary: 問題回答
+      parameters:
+        - in: path
+          name: questionId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnswerRequest'
+      responses:
+        '200':
+          description: 判定結果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnswerResponse'
+  /api/v1/units/{unitId}/tests/submit:
+    post:
+      summary: 確認テスト提出（80%以上で合格）
+      parameters:
+        - in: path
+          name: unitId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestSubmitRequest'
+      responses:
+        '200':
+          description: 採点結果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TestSubmitResponse'
+  /api/v1/units/{unitId}/review-set/submit:
+    post:
+      summary: 復習問題提出（5問中4問正解でクリア）
+      parameters:
+        - in: path
+          name: unitId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewSubmitRequest'
+      responses:
+        '200':
+          description: 判定結果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewSubmitResponse'
+  /api/v1/badges/me:
+    get:
+      summary: 獲得済みバッジ一覧
+      responses:
+        '200':
+          description: 取得成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BadgesResponse'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    User:
+      type: object
+      required: [id, displayName]
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+          format: email
+        displayName:
+          type: string
+    SignupRequest:
+      type: object
+      required: [email, password, displayName]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+        displayName:
+          type: string
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+    OAuthRequest:
+      type: object
+      required: [provider, idToken]
+      properties:
+        provider:
+          type: string
+          enum: [google, apple]
+        idToken:
+          type: string
+    AuthResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            user:
+              $ref: '#/components/schemas/User'
+            token:
+              type: string
+    RecommendationItem:
+      type: object
+      properties:
+        questionId:
+          type: string
+        unitId:
+          type: string
+        unitTitle:
+          type: string
+        questionType:
+          type: string
+          enum: [numeric_input, dropdown]
+        body:
+          type: string
+    HomeResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            todayRecommendation:
+              type: array
+              items:
+                $ref: '#/components/schemas/RecommendationItem'
+            streakDays:
+              type: integer
+            inProgressUnit:
+              type: object
+              nullable: true
+              properties:
+                unitId:
+                  type: string
+                title:
+                  type: string
+                currentStep:
+                  type: string
+                  enum: [intro, example, practice, test]
+    RecommendationResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            source:
+              type: string
+              example: random
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/RecommendationItem'
+    Unit:
+      type: object
+      properties:
+        unitId:
+          type: string
+        title:
+          type: string
+        status:
+          type: string
+          enum: [not_started, in_progress, completed]
+        currentStepOrder:
+          type: integer
+    UnitsResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Unit'
+    UnitStartResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            unitId:
+              type: string
+            status:
+              type: string
+              example: in_progress
+            currentStepOrder:
+              type: integer
+              example: 1
+            currentStepType:
+              type: string
+              example: intro
+    AnswerRequest:
+      type: object
+      required: [answer]
+      properties:
+        answer:
+          type: string
+        elapsedMs:
+          type: integer
+    AnswerResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            isCorrect:
+              type: boolean
+            correctAnswer:
+              type: string
+            explanation:
+              type: string
+            nextHintAvailable:
+              type: boolean
+    TestAnswerItem:
+      type: object
+      required: [questionId, answer]
+      properties:
+        questionId:
+          type: string
+        answer:
+          type: string
+    TestSubmitRequest:
+      type: object
+      required: [answers]
+      properties:
+        answers:
+          type: array
+          items:
+            $ref: '#/components/schemas/TestAnswerItem'
+    TestSubmitResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            scorePercent:
+              type: number
+            isPassed:
+              type: boolean
+            passThreshold:
+              type: number
+              example: 80
+            nextAction:
+              type: string
+              enum: [passed, go_review]
+    ReviewSubmitRequest:
+      type: object
+      required: [reviewSetId, answers]
+      properties:
+        reviewSetId:
+          type: string
+        answers:
+          type: array
+          items:
+            $ref: '#/components/schemas/TestAnswerItem'
+    ReviewSubmitResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            correctCount:
+              type: integer
+            questionCount:
+              type: integer
+              example: 5
+            requiredCorrectCount:
+              type: integer
+              example: 4
+            isCleared:
+              type: boolean
+            canRetryTest:
+              type: boolean
+    Badge:
+      type: object
+      properties:
+        badgeId:
+          type: string
+        name:
+          type: string
+        awardedAt:
+          type: string
+          format: date-time
+    BadgesResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Badge'
