@@ -1,8 +1,9 @@
+
 from __future__ import annotations
 
 import random
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query
@@ -13,7 +14,7 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
 from db import Base, engine, get_db
-from models import ReviewAttempt, UnitTestAttempt, User, UserUnitProgress
+from models import DailyLearningLog, RecommendationLog, ReviewAttempt, UnitTestAttempt, User, UserBadge, UserUnitProgress
 from settings import settings
 
 app = FastAPI(title=settings.app_name, version=settings.app_version)
@@ -134,9 +135,11 @@ hints: dict[str, list[dict]] = {"q_t_1": [{"hintId": "h_1", "hintLevel": 1, "hin
 review_sets: dict[str, dict] = {"rs_1": {"reviewSetId": "rs_1", "unitId": "unit_1", "questionIds": ["q_r_1", "q_r_2", "q_r_3", "q_r_4", "q_r_5"], "requiredCorrectCount": 4}}
 badges_catalog: list[dict] = [
     {"badgeId": "b_first", "badgeType": "first_completion", "name": "初回完了", "conditionValue": None},
+    {"badgeId": "b_unit_1", "badgeType": "unit_completion", "name": "単元1個完了", "conditionValue": 1},
     {"badgeId": "b_streak_3", "badgeType": "streak", "name": "3日継続", "conditionValue": 3},
+    {"badgeId": "b_streak_5", "badgeType": "streak", "name": "5日継続", "conditionValue": 5},
+    {"badgeId": "b_streak_7", "badgeType": "streak", "name": "7日継続", "conditionValue": 7},
 ]
-user_badges: dict[str, list[dict]] = {}
 
 
 def now_iso() -> str:
@@ -174,6 +177,93 @@ def _verify_password(plain_password: str, password_hash: str) -> bool:
 def _hash_password(password: str) -> str:
     return pwd_context.hash(password)
 
+
+
+
+def _compute_streak_days(db: Session, user_id: str) -> int:
+    days = {row.learning_date for row in db.query(DailyLearningLog).filter(DailyLearningLog.user_id == user_id).all()}
+    streak = 0
+    cursor = date.today()
+    while cursor in days:
+        streak += 1
+        cursor = cursor - timedelta(days=1)
+    return streak
+
+
+def _today_solved_count(db: Session, user_id: str) -> int:
+    row = db.query(DailyLearningLog).filter(DailyLearningLog.user_id == user_id, DailyLearningLog.learning_date == date.today()).first()
+    return row.answered_count if row else 0
+
+
+def _record_learning(db: Session, user_id: str) -> None:
+    row = db.query(DailyLearningLog).filter(DailyLearningLog.user_id == user_id, DailyLearningLog.learning_date == date.today()).first()
+    if not row:
+        row = DailyLearningLog(user_id=user_id, learning_date=date.today(), answered_count=0)
+        db.add(row)
+    row.answered_count += 1
+    db.commit()
+
+
+def _pick_recommendations(db: Session, user_id: str, count: int) -> list[dict]:
+    all_q = list(questions.values())
+    if not all_q:
+        return []
+
+    today_ids = {
+        r.question_id
+        for r in db.query(RecommendationLog).filter(RecommendationLog.user_id == user_id, RecommendationLog.recommended_date == date.today()).all()
+    }
+    fresh_pool = [q for q in all_q if q["questionId"] not in today_ids]
+    pool = fresh_pool if fresh_pool else all_q
+    picks = random.sample(pool, k=min(count, len(pool)))
+
+    for q in picks:
+        db.add(RecommendationLog(user_id=user_id, question_id=q["questionId"], recommended_date=date.today(), source="random"))
+    db.commit()
+    return picks
+
+
+def _evaluate_and_award_badges(db: Session, user_id: str) -> list[dict]:
+    completed_units = db.query(UserUnitProgress).filter(UserUnitProgress.user_id == user_id, UserUnitProgress.status == "completed").count()
+    streak_days = _compute_streak_days(db, user_id)
+
+    existing = {b.badge_id for b in db.query(UserBadge).filter(UserBadge.user_id == user_id).all()}
+    newly_awarded: list[dict] = []
+
+    for badge in badges_catalog:
+        if badge["badgeId"] in existing:
+            continue
+        badge_type = badge["badgeType"]
+        condition = badge.get("conditionValue")
+
+        should_award = False
+        if badge_type == "first_completion":
+            should_award = completed_units >= 1
+        elif badge_type == "unit_completion" and condition is not None:
+            should_award = completed_units >= int(condition)
+        elif badge_type == "streak" and condition is not None:
+            should_award = streak_days >= int(condition)
+
+        if should_award:
+            rec = UserBadge(
+                user_id=user_id,
+                badge_id=badge["badgeId"],
+                badge_name=badge["name"],
+                badge_type=badge_type,
+                condition_value=condition,
+            )
+            db.add(rec)
+            newly_awarded.append(
+                {
+                    "badgeId": badge["badgeId"],
+                    "badgeType": badge_type,
+                    "name": badge["name"],
+                    "conditionValue": condition,
+                }
+            )
+
+    db.commit()
+    return newly_awarded
 
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
@@ -250,18 +340,30 @@ def me(current_user: User = Depends(get_current_user)):
 
 
 @app.get("/api/v1/home")
-def home(current_user: User = Depends(get_current_user)):
-    recs = random.sample(list(questions.values()), k=min(1, len(questions)))
-    mapped = [{k: q.get(k) for k in ["questionId", "unitId", "questionType", "body"]} | {"unitTitle": units[q["unitId"]]["title"]} for q in recs]
-    return ok({"todayRecommendation": mapped, "streakDays": 0, "inProgressUnit": None, "latestBadges": user_badges.get(current_user.id, [])[-3:]})
+def home(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    picks = _pick_recommendations(db, current_user.id, 1)
+    mapped = [{k: q.get(k) for k in ["questionId", "unitId", "questionType", "body"]} | {"unitTitle": units[q["unitId"]]["title"]} for q in picks]
+
+    in_progress = db.query(UserUnitProgress).filter(UserUnitProgress.user_id == current_user.id, UserUnitProgress.status == "in_progress").first()
+    in_progress_payload = None
+    if in_progress:
+        unit_meta = units.get(in_progress.unit_id, {})
+        in_progress_payload = {
+            "unitId": in_progress.unit_id,
+            "title": unit_meta.get("title", ""),
+            "currentStep": in_progress.current_step_type,
+        }
+
+    latest_badges = db.query(UserBadge).filter(UserBadge.user_id == current_user.id).order_by(UserBadge.awarded_at.desc()).limit(3).all()
+    latest_badges_payload = [{"badgeId": b.badge_id, "name": b.badge_name, "awardedAt": b.awarded_at.isoformat()} for b in latest_badges]
+
+    return ok({"todayRecommendation": mapped, "streakDays": _compute_streak_days(db, current_user.id), "inProgressUnit": in_progress_payload, "latestBadges": latest_badges_payload})
 
 
 @app.get("/api/v1/recommendations/today")
-def recommendations_today(count: int = 3, current_user: User = Depends(get_current_user)):
-    _ = current_user
+def recommendations_today(count: int = 3, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     count = max(1, min(10, count))
-    all_q = list(questions.values())
-    picks = random.sample(all_q, k=min(count, len(all_q)))
+    picks = _pick_recommendations(db, current_user.id, count)
     items = [{"questionId": q["questionId"], "unitId": q["unitId"], "unitTitle": units[q["unitId"]]["title"], "questionType": q["questionType"], "body": q["body"]} for q in picks]
     return ok({"source": "random", "items": items})
 
@@ -346,9 +448,10 @@ def list_questions(unit_id: str, stepType: Literal["practice", "test", "review"]
 
 
 @app.post("/api/v1/questions/{question_id}/answer")
-def answer_question(question_id: str, req: AnswerRequest):
+def answer_question(question_id: str, req: AnswerRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     q = _question_or_404(question_id)
     correct = str(req.answer).strip() == str(q["correctAnswer"]).strip()
+    _record_learning(db, current_user.id)
     return ok({"isCorrect": correct, "correctAnswer": q["correctAnswer"], "explanation": q.get("explanation", ""), "nextHintAvailable": (not correct and len(hints.get(question_id, [])) > 0)})
 
 
@@ -447,7 +550,7 @@ def submit_review(unit_id: str, req: ReviewSubmitRequest, current_user: User = D
 def progress_summary(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     completed = db.query(UserUnitProgress).filter(UserUnitProgress.user_id == current_user.id, UserUnitProgress.status == "completed").count()
     in_progress = db.query(UserUnitProgress).filter(UserUnitProgress.user_id == current_user.id, UserUnitProgress.status == "in_progress").count()
-    return ok({"completedUnits": completed, "inProgressUnits": in_progress, "streakDays": 0, "todaySolvedCount": 0})
+    return ok({"completedUnits": completed, "inProgressUnits": in_progress, "streakDays": _compute_streak_days(db, current_user.id), "todaySolvedCount": _today_solved_count(db, current_user.id)})
 
 
 @app.get("/api/v1/badges")
@@ -456,13 +559,24 @@ def badges():
 
 
 @app.get("/api/v1/badges/me")
-def my_badges(current_user: User = Depends(get_current_user)):
-    return ok(user_badges.get(current_user.id, []))
+def my_badges(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    items = db.query(UserBadge).filter(UserBadge.user_id == current_user.id).order_by(UserBadge.awarded_at.asc()).all()
+    return ok([
+        {
+            "badgeId": b.badge_id,
+            "badgeType": b.badge_type,
+            "name": b.badge_name,
+            "conditionValue": b.condition_value,
+            "awardedAt": b.awarded_at.isoformat(),
+        }
+        for b in items
+    ])
 
 
 @app.post("/api/v1/badges/evaluate")
-def eval_badges():
-    return ok({})
+def eval_badges(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    newly_awarded = _evaluate_and_award_badges(db, current_user.id)
+    return ok({"awarded": newly_awarded})
 
 
 # Admin endpoints

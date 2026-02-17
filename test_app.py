@@ -90,8 +90,35 @@ def test_submit_test_fail_requires_review_then_clear_and_retry():
     assert retry.json()["data"]["isPassed"] is True
 
 
+def test_phase3_progress_summary_and_badges():
+    headers = _auth_header()
+
+    # learning log should increase by answering a question
+    answer = client.post("/api/v1/questions/q_pr_1/answer", headers=headers, json={"answer": "5"})
+    assert answer.status_code == 200
+
+    summary = client.get("/api/v1/progress/summary", headers=headers)
+    assert summary.status_code == 200
+    assert summary.json()["data"]["todaySolvedCount"] >= 1
+
+    # complete one unit then evaluate badges
+    client.post("/api/v1/units/unit_1/start", headers=headers)
+    client.get("/api/v1/units/unit_1/steps/example", headers=headers)
+    client.get("/api/v1/units/unit_1/steps/practice", headers=headers)
+    client.post("/api/v1/units/unit_1/tests/submit", headers=headers, json={"answers": [{"questionId": "q_t_1", "answer": "A"}]})
+
+    awarded = client.post("/api/v1/badges/evaluate", headers=headers)
+    assert awarded.status_code == 200
+
+    mine = client.get("/api/v1/badges/me", headers=headers)
+    assert mine.status_code == 200
+    ids = {b["badgeId"] for b in mine.json()["data"]}
+    assert "b_first" in ids
+
+
 def test_random_recommendations_source_label():
-    res = client.get("/api/v1/recommendations/today?count=2", headers=_auth_header())
+    headers = _auth_header()
+    res = client.get("/api/v1/recommendations/today?count=2", headers=headers)
     assert res.status_code == 200
     data = res.json()["data"]
     assert data["source"] == "random"
