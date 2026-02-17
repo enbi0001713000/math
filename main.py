@@ -13,7 +13,7 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
 from db import Base, engine, get_db
-from models import User, UserUnitProgress
+from models import ReviewAttempt, UnitTestAttempt, User, UserUnitProgress
 from settings import settings
 
 app = FastAPI(title=settings.app_name, version=settings.app_version)
@@ -307,17 +307,31 @@ def unit_progress(unit_id: str, current_user: User = Depends(get_current_user), 
     _unit_or_404(unit_id)
     item = db.query(UserUnitProgress).filter(UserUnitProgress.user_id == current_user.id, UserUnitProgress.unit_id == unit_id).first()
     if not item:
-        return ok({"unitId": unit_id, "status": "not_started", "currentStepOrder": 1, "completedAt": None})
+        return ok({"unitId": unit_id, "status": "not_started", "currentStepOrder": 1, "currentStepType": "intro", "completedAt": None})
     return ok({"unitId": unit_id, "status": item.status, "currentStepOrder": item.current_step_order, "currentStepType": item.current_step_type, "completedAt": item.completed_at.isoformat() if item.completed_at else None})
 
 
 @app.get("/api/v1/units/{unit_id}/steps/{step_type}")
-def unit_step(unit_id: str, step_type: StepType):
+def unit_step(unit_id: str, step_type: StepType, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     u = _unit_or_404(unit_id)
-    for s in u["steps"]:
-        if s["stepType"] == step_type:
-            return ok({"unitId": unit_id, "stepType": step_type, "title": s["title"], "contentMarkdown": s["contentMarkdown"]})
-    raise HTTPException(status_code=404, detail="step not found")
+    step = next((s for s in u["steps"] if s["stepType"] == step_type), None)
+    if not step:
+        raise HTTPException(status_code=404, detail="step not found")
+
+    item = db.query(UserUnitProgress).filter(UserUnitProgress.user_id == current_user.id, UserUnitProgress.unit_id == unit_id).first()
+    if not item:
+        raise HTTPException(status_code=409, detail="unit not started")
+
+    requested_order = step["stepOrder"]
+    if requested_order > item.current_step_order + 1:
+        raise HTTPException(status_code=409, detail="step is locked")
+
+    if requested_order == item.current_step_order + 1:
+        item.current_step_order = requested_order
+        item.current_step_type = step_type
+        db.commit()
+
+    return ok({"unitId": unit_id, "stepType": step_type, "title": step["title"], "contentMarkdown": step["contentMarkdown"]})
 
 
 @app.get("/api/v1/units/{unit_id}/questions")
@@ -351,26 +365,40 @@ def get_hint(question_id: str, level: int):
 @app.post("/api/v1/units/{unit_id}/tests/submit")
 def submit_test(unit_id: str, req: TestSubmitRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     _unit_or_404(unit_id)
+    item = db.query(UserUnitProgress).filter(UserUnitProgress.user_id == current_user.id, UserUnitProgress.unit_id == unit_id).first()
+    if not item:
+        raise HTTPException(status_code=409, detail="unit not started")
+    if item.current_step_type == "review":
+        raise HTTPException(status_code=409, detail="review required before test retry")
+    if item.current_step_order < 3:
+        raise HTTPException(status_code=409, detail="practice step must be completed before test")
+
     total = len(req.answers)
     if total == 0:
         raise HTTPException(status_code=400, detail="answers required")
+
     correct = 0
     for a in req.answers:
         q = _question_or_404(a.questionId)
         if q["unitId"] == unit_id and q["stepType"] == "test" and str(a.answer).strip() == str(q["correctAnswer"]).strip():
             correct += 1
+
     score = round((correct / total) * 100, 2)
     passed = score >= 80
+    db.add(UnitTestAttempt(user_id=current_user.id, unit_id=unit_id, score_percent=score, is_passed=passed))
+
     if passed:
-        item = db.query(UserUnitProgress).filter(UserUnitProgress.user_id == current_user.id, UserUnitProgress.unit_id == unit_id).first()
-        if not item:
-            item = UserUnitProgress(user_id=current_user.id, unit_id=unit_id)
-            db.add(item)
         item.status = "completed"
         item.current_step_order = 4
         item.current_step_type = "test"
         item.completed_at = datetime.utcnow()
-        db.commit()
+    else:
+        item.status = "in_progress"
+        item.current_step_order = 3
+        item.current_step_type = "review"
+        item.completed_at = None
+
+    db.commit()
     return ok({"scorePercent": score, "passThreshold": 80, "isPassed": passed, "nextAction": "passed" if passed else "go_review"})
 
 
@@ -385,18 +413,33 @@ def get_review_set(unit_id: str):
 
 
 @app.post("/api/v1/units/{unit_id}/review-set/submit")
-def submit_review(unit_id: str, req: ReviewSubmitRequest):
+def submit_review(unit_id: str, req: ReviewSubmitRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     _unit_or_404(unit_id)
+    item = db.query(UserUnitProgress).filter(UserUnitProgress.user_id == current_user.id, UserUnitProgress.unit_id == unit_id).first()
+    if not item:
+        raise HTTPException(status_code=409, detail="unit not started")
+    if item.current_step_type != "review":
+        raise HTTPException(status_code=409, detail="review step is not active")
+
     rs = review_sets.get(req.reviewSetId)
     if not rs or rs["unitId"] != unit_id:
         raise HTTPException(status_code=404, detail="review set not found")
+
     correct = 0
     for a in req.answers:
         q = _question_or_404(a.questionId)
         if q["questionId"] in rs["questionIds"] and str(a.answer).strip() == str(q["correctAnswer"]).strip():
             correct += 1
+
     count = len(rs["questionIds"])
     cleared = correct >= rs["requiredCorrectCount"]
+    db.add(ReviewAttempt(user_id=current_user.id, unit_id=unit_id, review_set_id=req.reviewSetId, correct_count=correct, is_cleared=cleared))
+
+    if cleared:
+        item.current_step_order = 4
+        item.current_step_type = "test"
+
+    db.commit()
     return ok({"correctCount": correct, "questionCount": count, "requiredCorrectCount": rs["requiredCorrectCount"], "isCleared": cleared, "canRetryTest": cleared})
 
 

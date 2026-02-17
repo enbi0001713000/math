@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, Integer, String, UniqueConstraint
+from sqlalchemy import Column, Boolean, DateTime, Float, Integer, String, UniqueConstraint
 
 from db import Base
 
@@ -26,3 +26,26 @@ class UserUnitProgress(Base):
     current_step_order = Column(Integer, nullable=False, default=1)
     current_step_type = Column(String, nullable=False, default="intro")
     completed_at = Column(DateTime, nullable=True)
+
+
+class UnitTestAttempt(Base):
+    __tablename__ = "unit_test_attempts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String, nullable=False, index=True)
+    unit_id = Column(String, nullable=False, index=True)
+    score_percent = Column(Float, nullable=False)
+    is_passed = Column(Boolean, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class ReviewAttempt(Base):
+    __tablename__ = "review_attempts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String, nullable=False, index=True)
+    unit_id = Column(String, nullable=False, index=True)
+    review_set_id = Column(String, nullable=False)
+    correct_count = Column(Integer, nullable=False)
+    is_cleared = Column(Boolean, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

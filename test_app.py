@@ -31,29 +31,43 @@ def test_auth_me_requires_and_returns_user():
     assert res.json()["data"]["user"]["email"] == "student@example.com"
 
 
-def test_unit_start_always_step1():
-    res = client.post("/api/v1/units/unit_1/start", headers=_auth_header())
-    assert res.status_code == 200
-    data = res.json()["data"]
-    assert data["currentStepOrder"] == 1
-    assert data["currentStepType"] == "intro"
+def test_step_lock_and_order_progression():
+    headers = _auth_header()
+    client.post("/api/v1/units/unit_1/start", headers=headers)
+
+    locked = client.get("/api/v1/units/unit_1/steps/test", headers=headers)
+    assert locked.status_code == 409
+
+    intro = client.get("/api/v1/units/unit_1/steps/intro", headers=headers)
+    assert intro.status_code == 200
+    example = client.get("/api/v1/units/unit_1/steps/example", headers=headers)
+    assert example.status_code == 200
+    practice = client.get("/api/v1/units/unit_1/steps/practice", headers=headers)
+    assert practice.status_code == 200
 
 
-def test_submit_test_pass_threshold_80():
-    res = client.post(
+def test_submit_test_fail_requires_review_then_clear_and_retry():
+    headers = _auth_header()
+    client.post("/api/v1/units/unit_1/start", headers=headers)
+    client.get("/api/v1/units/unit_1/steps/example", headers=headers)
+    client.get("/api/v1/units/unit_1/steps/practice", headers=headers)
+
+    fail = client.post(
         "/api/v1/units/unit_1/tests/submit",
-        headers=_auth_header(),
+        headers=headers,
+        json={"answers": [{"questionId": "q_t_1", "answer": "B"}]},
+    )
+    assert fail.status_code == 200
+    assert fail.json()["data"]["isPassed"] is False
+
+    blocked_retry = client.post(
+        "/api/v1/units/unit_1/tests/submit",
+        headers=headers,
         json={"answers": [{"questionId": "q_t_1", "answer": "A"}]},
     )
-    assert res.status_code == 200
-    data = res.json()["data"]
-    assert data["scorePercent"] == 100.0
-    assert data["isPassed"] is True
-    assert data["nextAction"] == "passed"
+    assert blocked_retry.status_code == 409
 
-
-def test_review_clear_condition_4_of_5():
-    payload = {
+    review_payload = {
         "reviewSetId": "rs_1",
         "answers": [
             {"questionId": "q_r_1", "answer": "7"},
@@ -63,12 +77,17 @@ def test_review_clear_condition_4_of_5():
             {"questionId": "q_r_5", "answer": "0"},
         ],
     }
-    res = client.post("/api/v1/units/unit_1/review-set/submit", json=payload)
-    assert res.status_code == 200
-    data = res.json()["data"]
-    assert data["correctCount"] == 4
-    assert data["isCleared"] is True
-    assert data["canRetryTest"] is True
+    review = client.post("/api/v1/units/unit_1/review-set/submit", headers=headers, json=review_payload)
+    assert review.status_code == 200
+    assert review.json()["data"]["isCleared"] is True
+
+    retry = client.post(
+        "/api/v1/units/unit_1/tests/submit",
+        headers=headers,
+        json={"answers": [{"questionId": "q_t_1", "answer": "A"}]},
+    )
+    assert retry.status_code == 200
+    assert retry.json()["data"]["isPassed"] is True
 
 
 def test_random_recommendations_source_label():
