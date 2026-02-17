@@ -1,0 +1,1398 @@
+openapi: 3.0.3
+info:
+  title: High School Math Learning API
+  version: 1.1.0
+  description: |
+    高校数学 1A・2B・2C 学習Webアプリ向け API。
+
+    - 単元は自由選択（順序ロックなし）
+    - 単元内は Step1（導入）から固定進行: 導入 → 例題 → 演習 → 確認テスト
+    - 確認テストは 80%以上で合格
+    - 不合格時は復習問題（5問）に遷移し、4問以上正解で再挑戦可能
+    - 今日のおすすめ問題はランダム出題
+servers:
+  - url: https://api.example.com
+security:
+  - bearerAuth: []
+tags:
+  - name: Auth
+  - name: Home
+  - name: Subjects
+  - name: Units
+  - name: Questions
+  - name: Tests
+  - name: Progress
+  - name: Badges
+  - name: Admin
+paths:
+  /api/v1/auth/signup:
+    post:
+      tags: [Auth]
+      summary: メール新規登録
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignupRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/AuthSuccess'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/auth/login:
+    post:
+      tags: [Auth]
+      summary: メールログイン
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/AuthSuccess'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/auth/oauth:
+    post:
+      tags: [Auth]
+      summary: OAuthログイン（Google/Apple）
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OAuthRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/AuthSuccess'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/auth/logout:
+    post:
+      tags: [Auth]
+      summary: ログアウト
+      responses:
+        '200':
+          description: ログアウト成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessOnlyResponse'
+
+  /api/v1/auth/me:
+    get:
+      tags: [Auth]
+      summary: 自分のプロフィール取得
+      responses:
+        '200':
+          description: 取得成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/home:
+    get:
+      tags: [Home]
+      summary: ホーム情報取得
+      responses:
+        '200':
+          description: 取得成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HomeResponse'
+
+  /api/v1/recommendations/today:
+    get:
+      tags: [Home]
+      summary: 今日のおすすめ問題（ランダム）
+      parameters:
+        - in: query
+          name: count
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 10
+            default: 3
+      responses:
+        '200':
+          description: 取得成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecommendationResponse'
+
+  /api/v1/subjects:
+    get:
+      tags: [Subjects]
+      summary: 科目一覧取得（1A/2B/2C）
+      responses:
+        '200':
+          description: 取得成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubjectsResponse'
+
+  /api/v1/units:
+    get:
+      tags: [Units]
+      summary: 単元一覧取得（進捗付き）
+      parameters:
+        - in: query
+          name: subject
+          schema:
+            $ref: '#/components/schemas/SubjectCode'
+      responses:
+        '200':
+          description: 取得成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnitsResponse'
+
+  /api/v1/units/{unitId}:
+    get:
+      tags: [Units]
+      summary: 単元詳細取得
+      parameters:
+        - $ref: '#/components/parameters/UnitId'
+      responses:
+        '200':
+          description: 取得成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnitDetailResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/units/{unitId}/start:
+    post:
+      tags: [Units]
+      summary: 単元開始（必ず Step1 から）
+      parameters:
+        - $ref: '#/components/parameters/UnitId'
+      responses:
+        '200':
+          description: 開始成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnitStartResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/units/{unitId}/progress:
+    get:
+      tags: [Units]
+      summary: 単元進捗取得
+      parameters:
+        - $ref: '#/components/parameters/UnitId'
+      responses:
+        '200':
+          description: 取得成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnitProgressResponse'
+
+  /api/v1/units/{unitId}/steps/{stepType}:
+    get:
+      tags: [Units]
+      summary: 学習ステップ内容取得（LaTeX含む）
+      parameters:
+        - $ref: '#/components/parameters/UnitId'
+        - in: path
+          name: stepType
+          required: true
+          schema:
+            $ref: '#/components/schemas/StepType'
+      responses:
+        '200':
+          description: 取得成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnitStepResponse'
+
+  /api/v1/units/{unitId}/questions:
+    get:
+      tags: [Questions]
+      summary: 問題一覧取得
+      parameters:
+        - $ref: '#/components/parameters/UnitId'
+        - in: query
+          name: stepType
+          schema:
+            type: string
+            enum: [practice, test, review]
+        - in: query
+          name: count
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+        - in: query
+          name: random
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: 取得成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestionsResponse'
+
+  /api/v1/questions/{questionId}/answer:
+    post:
+      tags: [Questions]
+      summary: 問題回答
+      parameters:
+        - $ref: '#/components/parameters/QuestionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnswerRequest'
+      responses:
+        '200':
+          description: 判定結果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnswerResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/questions/{questionId}/hints/{level}:
+    get:
+      tags: [Questions]
+      summary: 多段階ヒント取得
+      parameters:
+        - $ref: '#/components/parameters/QuestionId'
+        - in: path
+          name: level
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: 取得成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HintResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/units/{unitId}/tests/submit:
+    post:
+      tags: [Tests]
+      summary: 確認テスト提出（80%以上で合格）
+      parameters:
+        - $ref: '#/components/parameters/UnitId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestSubmitRequest'
+      responses:
+        '200':
+          description: 採点結果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TestSubmitResponse'
+
+  /api/v1/units/{unitId}/review-set:
+    get:
+      tags: [Tests]
+      summary: 復習問題セット取得（5問）
+      parameters:
+        - $ref: '#/components/parameters/UnitId'
+      responses:
+        '200':
+          description: 取得成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewSetResponse'
+
+  /api/v1/units/{unitId}/review-set/submit:
+    post:
+      tags: [Tests]
+      summary: 復習問題提出（5問中4問正解でクリア）
+      parameters:
+        - $ref: '#/components/parameters/UnitId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewSubmitRequest'
+      responses:
+        '200':
+          description: 判定結果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewSubmitResponse'
+
+  /api/v1/progress/summary:
+    get:
+      tags: [Progress]
+      summary: 学習サマリー取得
+      responses:
+        '200':
+          description: 取得成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProgressSummaryResponse'
+
+  /api/v1/badges:
+    get:
+      tags: [Badges]
+      summary: バッジ一覧取得（未獲得含む）
+      responses:
+        '200':
+          description: 取得成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BadgeCatalogResponse'
+
+  /api/v1/badges/me:
+    get:
+      tags: [Badges]
+      summary: 獲得済みバッジ一覧
+      responses:
+        '200':
+          description: 取得成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BadgesResponse'
+
+  /api/v1/badges/evaluate:
+    post:
+      tags: [Badges]
+      summary: バッジ再判定（内部用途）
+      responses:
+        '200':
+          description: 再判定成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessOnlyResponse'
+
+  /api/v1/admin/units:
+    post:
+      tags: [Admin]
+      summary: 単元作成
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminUnitUpsertRequest'
+      responses:
+        '200':
+          description: 作成成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnitDetailResponse'
+
+  /api/v1/admin/units/{unitId}:
+    put:
+      tags: [Admin]
+      summary: 単元更新
+      parameters:
+        - $ref: '#/components/parameters/UnitId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminUnitUpsertRequest'
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnitDetailResponse'
+    delete:
+      tags: [Admin]
+      summary: 単元削除
+      parameters:
+        - $ref: '#/components/parameters/UnitId'
+      responses:
+        '200':
+          description: 削除成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessOnlyResponse'
+
+  /api/v1/admin/units/{unitId}/steps:
+    post:
+      tags: [Admin]
+      summary: ステップ作成
+      parameters:
+        - $ref: '#/components/parameters/UnitId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminStepUpsertRequest'
+      responses:
+        '200':
+          description: 作成成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnitStepResponse'
+
+  /api/v1/admin/steps/{stepId}:
+    put:
+      tags: [Admin]
+      summary: ステップ更新
+      parameters:
+        - in: path
+          name: stepId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminStepUpsertRequest'
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnitStepResponse'
+
+  /api/v1/admin/questions:
+    post:
+      tags: [Admin]
+      summary: 問題作成
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminQuestionUpsertRequest'
+      responses:
+        '200':
+          description: 作成成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestionResponse'
+
+  /api/v1/admin/questions/{questionId}:
+    put:
+      tags: [Admin]
+      summary: 問題更新
+      parameters:
+        - $ref: '#/components/parameters/QuestionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminQuestionUpsertRequest'
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestionResponse'
+    delete:
+      tags: [Admin]
+      summary: 問題削除
+      parameters:
+        - $ref: '#/components/parameters/QuestionId'
+      responses:
+        '200':
+          description: 削除成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessOnlyResponse'
+
+  /api/v1/admin/questions/{questionId}/hints:
+    post:
+      tags: [Admin]
+      summary: ヒント作成
+      parameters:
+        - $ref: '#/components/parameters/QuestionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminHintUpsertRequest'
+      responses:
+        '200':
+          description: 作成成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HintResponse'
+
+  /api/v1/admin/hints/{hintId}:
+    put:
+      tags: [Admin]
+      summary: ヒント更新
+      parameters:
+        - in: path
+          name: hintId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminHintUpsertRequest'
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HintResponse'
+
+  /api/v1/admin/review-sets:
+    post:
+      tags: [Admin]
+      summary: 復習セット作成
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminReviewSetUpsertRequest'
+      responses:
+        '200':
+          description: 作成成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewSetResponse'
+
+  /api/v1/admin/review-sets/{setId}:
+    put:
+      tags: [Admin]
+      summary: 復習セット更新
+      parameters:
+        - in: path
+          name: setId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminReviewSetUpsertRequest'
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewSetResponse'
+
+  /api/v1/admin/badges:
+    post:
+      tags: [Admin]
+      summary: バッジ作成
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminBadgeUpsertRequest'
+      responses:
+        '200':
+          description: 作成成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BadgeCatalogResponse'
+
+  /api/v1/admin/badges/{badgeId}:
+    put:
+      tags: [Admin]
+      summary: バッジ更新
+      parameters:
+        - in: path
+          name: badgeId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminBadgeUpsertRequest'
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BadgeCatalogResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    UnitId:
+      in: path
+      name: unitId
+      required: true
+      schema:
+        type: string
+    QuestionId:
+      in: path
+      name: questionId
+      required: true
+      schema:
+        type: string
+
+  responses:
+    AuthSuccess:
+      description: 認証成功
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthResponse'
+    BadRequest:
+      description: 不正なリクエスト
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: 認証エラー
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: リソースが見つからない
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    SubjectCode:
+      type: string
+      enum: [1A, 2B, 2C]
+
+    StepType:
+      type: string
+      enum: [intro, example, practice, test]
+
+    User:
+      type: object
+      required: [id, displayName]
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+          format: email
+          nullable: true
+        displayName:
+          type: string
+
+    SignupRequest:
+      type: object
+      required: [email, password, displayName]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+        displayName:
+          type: string
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+
+    OAuthRequest:
+      type: object
+      required: [provider, idToken]
+      properties:
+        provider:
+          type: string
+          enum: [google, apple]
+        idToken:
+          type: string
+
+    ErrorObject:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          example: VALIDATION_ERROR
+        message:
+          type: string
+          example: email is required
+
+    ErrorResponse:
+      type: object
+      required: [success, data, error]
+      properties:
+        success:
+          type: boolean
+          example: false
+        data:
+          nullable: true
+        error:
+          $ref: '#/components/schemas/ErrorObject'
+
+    SuccessOnlyResponse:
+      type: object
+      required: [success, data, error]
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+        error:
+          nullable: true
+
+    AuthResponse:
+      type: object
+      required: [success, data, error]
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            user:
+              $ref: '#/components/schemas/User'
+            token:
+              type: string
+        error:
+          nullable: true
+
+    MeResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            user:
+              $ref: '#/components/schemas/User'
+        error:
+          nullable: true
+
+    Subject:
+      type: object
+      properties:
+        id:
+          type: string
+        code:
+          $ref: '#/components/schemas/SubjectCode'
+        name:
+          type: string
+        sortOrder:
+          type: integer
+
+    SubjectsResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Subject'
+        error:
+          nullable: true
+
+    RecommendationItem:
+      type: object
+      properties:
+        questionId:
+          type: string
+        unitId:
+          type: string
+        unitTitle:
+          type: string
+        questionType:
+          type: string
+          enum: [numeric_input, dropdown]
+        body:
+          type: string
+
+    HomeResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            todayRecommendation:
+              type: array
+              items:
+                $ref: '#/components/schemas/RecommendationItem'
+            streakDays:
+              type: integer
+            inProgressUnit:
+              type: object
+              nullable: true
+              properties:
+                unitId:
+                  type: string
+                title:
+                  type: string
+                currentStep:
+                  $ref: '#/components/schemas/StepType'
+            latestBadges:
+              type: array
+              items:
+                $ref: '#/components/schemas/Badge'
+        error:
+          nullable: true
+
+    RecommendationResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            source:
+              type: string
+              example: random
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/RecommendationItem'
+        error:
+          nullable: true
+
+    Unit:
+      type: object
+      properties:
+        unitId:
+          type: string
+        subjectCode:
+          $ref: '#/components/schemas/SubjectCode'
+        title:
+          type: string
+        status:
+          type: string
+          enum: [not_started, in_progress, completed]
+        currentStepOrder:
+          type: integer
+
+    UnitDetail:
+      type: object
+      properties:
+        unitId:
+          type: string
+        subjectCode:
+          $ref: '#/components/schemas/SubjectCode'
+        title:
+          type: string
+        description:
+          type: string
+        steps:
+          type: array
+          items:
+            type: object
+            properties:
+              stepOrder:
+                type: integer
+              stepType:
+                $ref: '#/components/schemas/StepType'
+              title:
+                type: string
+
+    UnitStep:
+      type: object
+      properties:
+        unitId:
+          type: string
+        stepType:
+          $ref: '#/components/schemas/StepType'
+        title:
+          type: string
+        contentMarkdown:
+          type: string
+
+    UnitsResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Unit'
+        error:
+          nullable: true
+
+    UnitDetailResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/UnitDetail'
+        error:
+          nullable: true
+
+    UnitStartResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            unitId:
+              type: string
+            status:
+              type: string
+              enum: [not_started, in_progress, completed]
+            currentStepOrder:
+              type: integer
+              example: 1
+            currentStepType:
+              $ref: '#/components/schemas/StepType'
+        error:
+          nullable: true
+
+    UnitProgressResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            unitId:
+              type: string
+            status:
+              type: string
+              enum: [not_started, in_progress, completed]
+            currentStepOrder:
+              type: integer
+            completedAt:
+              type: string
+              format: date-time
+              nullable: true
+        error:
+          nullable: true
+
+    QuestionChoice:
+      type: object
+      properties:
+        key:
+          type: string
+        text:
+          type: string
+
+    Question:
+      type: object
+      properties:
+        questionId:
+          type: string
+        unitId:
+          type: string
+        stepType:
+          type: string
+          enum: [practice, test, review]
+        questionType:
+          type: string
+          enum: [numeric_input, dropdown]
+        body:
+          type: string
+        choices:
+          type: array
+          items:
+            $ref: '#/components/schemas/QuestionChoice'
+
+    QuestionResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/Question'
+        error:
+          nullable: true
+
+    QuestionsResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Question'
+        error:
+          nullable: true
+
+    AnswerRequest:
+      type: object
+      required: [answer]
+      properties:
+        answer:
+          type: string
+        elapsedMs:
+          type: integer
+
+    AnswerResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            isCorrect:
+              type: boolean
+            correctAnswer:
+              type: string
+            explanation:
+              type: string
+            nextHintAvailable:
+              type: boolean
+        error:
+          nullable: true
+
+    Hint:
+      type: object
+      properties:
+        questionId:
+          type: string
+        hintLevel:
+          type: integer
+        hintText:
+          type: string
+
+    HintResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/Hint'
+        error:
+          nullable: true
+
+    TestAnswerItem:
+      type: object
+      required: [questionId, answer]
+      properties:
+        questionId:
+          type: string
+        answer:
+          type: string
+
+    TestSubmitRequest:
+      type: object
+      required: [answers]
+      properties:
+        answers:
+          type: array
+          items:
+            $ref: '#/components/schemas/TestAnswerItem'
+
+    TestSubmitResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            scorePercent:
+              type: number
+            passThreshold:
+              type: number
+              example: 80
+            isPassed:
+              type: boolean
+            nextAction:
+              type: string
+              enum: [passed, go_review]
+        error:
+          nullable: true
+
+    ReviewSet:
+      type: object
+      properties:
+        reviewSetId:
+          type: string
+        questionCount:
+          type: integer
+          example: 5
+        requiredCorrectCount:
+          type: integer
+          example: 4
+        questions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Question'
+
+    ReviewSetResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/ReviewSet'
+        error:
+          nullable: true
+
+    ReviewSubmitRequest:
+      type: object
+      required: [reviewSetId, answers]
+      properties:
+        reviewSetId:
+          type: string
+        answers:
+          type: array
+          items:
+            $ref: '#/components/schemas/TestAnswerItem'
+
+    ReviewSubmitResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            correctCount:
+              type: integer
+            questionCount:
+              type: integer
+              example: 5
+            requiredCorrectCount:
+              type: integer
+              example: 4
+            isCleared:
+              type: boolean
+            canRetryTest:
+              type: boolean
+        error:
+          nullable: true
+
+    Badge:
+      type: object
+      properties:
+        badgeId:
+          type: string
+        badgeType:
+          type: string
+          enum: [first_completion, unit_completion, streak]
+        name:
+          type: string
+        conditionValue:
+          type: integer
+          nullable: true
+        awardedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    BadgeCatalogResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Badge'
+        error:
+          nullable: true
+
+    BadgesResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Badge'
+        error:
+          nullable: true
+
+    ProgressSummaryResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            completedUnits:
+              type: integer
+            inProgressUnits:
+              type: integer
+            streakDays:
+              type: integer
+            todaySolvedCount:
+              type: integer
+        error:
+          nullable: true
+
+    AdminUnitUpsertRequest:
+      type: object
+      required: [subjectCode, title]
+      properties:
+        subjectCode:
+          $ref: '#/components/schemas/SubjectCode'
+        title:
+          type: string
+        description:
+          type: string
+        isPublished:
+          type: boolean
+
+    AdminStepUpsertRequest:
+      type: object
+      required: [stepType, stepOrder, title, contentMarkdown]
+      properties:
+        stepType:
+          $ref: '#/components/schemas/StepType'
+        stepOrder:
+          type: integer
+          minimum: 1
+          maximum: 4
+        title:
+          type: string
+        contentMarkdown:
+          type: string
+
+    AdminQuestionUpsertRequest:
+      type: object
+      required: [unitId, stepType, questionType, body, correctAnswer]
+      properties:
+        unitId:
+          type: string
+        stepType:
+          type: string
+          enum: [practice, test, review]
+        questionType:
+          type: string
+          enum: [numeric_input, dropdown]
+        body:
+          type: string
+        choices:
+          type: array
+          items:
+            $ref: '#/components/schemas/QuestionChoice'
+        correctAnswer:
+          type: string
+        explanation:
+          type: string
+
+    AdminHintUpsertRequest:
+      type: object
+      required: [hintLevel, hintText]
+      properties:
+        hintLevel:
+          type: integer
+          minimum: 1
+        hintText:
+          type: string
+
+    AdminReviewSetUpsertRequest:
+      type: object
+      required: [unitId, questionIds, requiredCorrectCount]
+      properties:
+        unitId:
+          type: string
+        questionIds:
+          type: array
+          minItems: 5
+          maxItems: 5
+          items:
+            type: string
+        requiredCorrectCount:
+          type: integer
+          minimum: 1
+          maximum: 5
+          default: 4
+
+    AdminBadgeUpsertRequest:
+      type: object
+      required: [badgeType, name]
+      properties:
+        badgeType:
+          type: string
+          enum: [first_completion, unit_completion, streak]
+        name:
+          type: string
+        conditionValue:
+          type: integer
+          nullable: true
