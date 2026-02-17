@@ -982,6 +982,16 @@ components:
         contentMarkdown:
           type: string
 
+    UnitStepResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/UnitStep'
+        error:
+          nullable: true
+
     UnitsResponse:
       type: object
       properties:
