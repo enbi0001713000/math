@@ -2,13 +2,23 @@ from __future__ import annotations
 
 import random
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from jose import JWTError, jwt
+from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr, Field
+from sqlalchemy.orm import Session
 
-app = FastAPI(title="High School Math Learning API", version="1.0.0")
+from db import Base, engine, get_db
+from models import User, UserUnitProgress
+from settings import settings
+
+app = FastAPI(title=settings.app_name, version=settings.app_version)
+security = HTTPBearer()
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 StepType = Literal["intro", "example", "practice", "test"]
 QuestionType = Literal["numeric_input", "dropdown"]
@@ -96,8 +106,6 @@ SUBJECTS = [
     {"id": "sub_2c", "code": "2C", "name": "数学2C", "sortOrder": 3},
 ]
 
-users: dict[str, dict] = {}
-users_by_email: dict[str, str] = {}
 units: dict[str, dict] = {
     "unit_1": {
         "unitId": "unit_1",
@@ -106,61 +114,24 @@ units: dict[str, dict] = {
         "description": "文字式と計算",
         "isPublished": True,
         "steps": [
-            {"stepOrder": 1, "stepType": "intro", "title": "導入", "contentMarkdown": "導入"},
-            {"stepOrder": 2, "stepType": "example", "title": "例題", "contentMarkdown": "例題"},
-            {"stepOrder": 3, "stepType": "practice", "title": "演習", "contentMarkdown": "演習"},
-            {"stepOrder": 4, "stepType": "test", "title": "確認テスト", "contentMarkdown": "確認"},
+            {"stepId": "st_1", "stepOrder": 1, "stepType": "intro", "title": "導入", "contentMarkdown": "導入"},
+            {"stepId": "st_2", "stepOrder": 2, "stepType": "example", "title": "例題", "contentMarkdown": "例題"},
+            {"stepId": "st_3", "stepOrder": 3, "stepType": "practice", "title": "演習", "contentMarkdown": "演習"},
+            {"stepId": "st_4", "stepOrder": 4, "stepType": "test", "title": "確認テスト", "contentMarkdown": "確認"},
         ],
     }
 }
 questions: dict[str, dict] = {
-    "q_pr_1": {
-        "questionId": "q_pr_1",
-        "unitId": "unit_1",
-        "stepType": "practice",
-        "questionType": "numeric_input",
-        "body": "2+3= ?",
-        "choices": [],
-        "correctAnswer": "5",
-        "explanation": "2と3を足すと5",
-    },
-    "q_t_1": {
-        "questionId": "q_t_1",
-        "unitId": "unit_1",
-        "stepType": "test",
-        "questionType": "dropdown",
-        "body": "x^2-5x+6=0 の解",
-        "choices": [{"key": "A", "text": "2,3"}, {"key": "B", "text": "1,6"}],
-        "correctAnswer": "A",
-        "explanation": "(x-2)(x-3)=0",
-    },
-    "q_r_1": {
-        "questionId": "q_r_1",
-        "unitId": "unit_1",
-        "stepType": "review",
-        "questionType": "numeric_input",
-        "body": "10-3=?",
-        "choices": [],
-        "correctAnswer": "7",
-        "explanation": "10から3を引く",
-    },
+    "q_pr_1": {"questionId": "q_pr_1", "unitId": "unit_1", "stepType": "practice", "questionType": "numeric_input", "body": "2+3= ?", "choices": [], "correctAnswer": "5", "explanation": "2と3を足すと5"},
+    "q_t_1": {"questionId": "q_t_1", "unitId": "unit_1", "stepType": "test", "questionType": "dropdown", "body": "x^2-5x+6=0 の解", "choices": [{"key": "A", "text": "2,3"}, {"key": "B", "text": "1,6"}], "correctAnswer": "A", "explanation": "(x-2)(x-3)=0"},
+    "q_r_1": {"questionId": "q_r_1", "unitId": "unit_1", "stepType": "review", "questionType": "numeric_input", "body": "10-3=?", "choices": [], "correctAnswer": "7", "explanation": "10から3を引く"},
     "q_r_2": {"questionId": "q_r_2", "unitId": "unit_1", "stepType": "review", "questionType": "numeric_input", "body": "8-2=?", "choices": [], "correctAnswer": "6", "explanation": ""},
     "q_r_3": {"questionId": "q_r_3", "unitId": "unit_1", "stepType": "review", "questionType": "numeric_input", "body": "6-1=?", "choices": [], "correctAnswer": "5", "explanation": ""},
     "q_r_4": {"questionId": "q_r_4", "unitId": "unit_1", "stepType": "review", "questionType": "numeric_input", "body": "4+4=?", "choices": [], "correctAnswer": "8", "explanation": ""},
     "q_r_5": {"questionId": "q_r_5", "unitId": "unit_1", "stepType": "review", "questionType": "numeric_input", "body": "9-4=?", "choices": [], "correctAnswer": "5", "explanation": ""},
 }
-hints: dict[str, list[dict]] = {
-    "q_t_1": [{"hintLevel": 1, "hintText": "積が6、和が-5"}, {"hintLevel": 2, "hintText": "2と3"}]
-}
-review_sets: dict[str, dict] = {
-    "rs_1": {
-        "reviewSetId": "rs_1",
-        "unitId": "unit_1",
-        "questionIds": ["q_r_1", "q_r_2", "q_r_3", "q_r_4", "q_r_5"],
-        "requiredCorrectCount": 4,
-    }
-}
-progress: dict[tuple[str, str], dict] = {}
+hints: dict[str, list[dict]] = {"q_t_1": [{"hintId": "h_1", "hintLevel": 1, "hintText": "積が6、和が-5"}, {"hintId": "h_2", "hintLevel": 2, "hintText": "2と3"}]}
+review_sets: dict[str, dict] = {"rs_1": {"reviewSetId": "rs_1", "unitId": "unit_1", "questionIds": ["q_r_1", "q_r_2", "q_r_3", "q_r_4", "q_r_5"], "requiredCorrectCount": 4}}
 badges_catalog: list[dict] = [
     {"badgeId": "b_first", "badgeType": "first_completion", "name": "初回完了", "conditionValue": None},
     {"badgeId": "b_streak_3", "badgeType": "streak", "name": "3日継続", "conditionValue": 3},
@@ -190,31 +161,82 @@ def _question_or_404(question_id: str) -> dict:
     return q
 
 
+def _create_access_token(user_id: str) -> str:
+    expires = datetime.utcnow() + timedelta(minutes=settings.access_token_expire_minutes)
+    payload = {"sub": user_id, "exp": expires}
+    return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+
+
+def _verify_password(plain_password: str, password_hash: str) -> bool:
+    return pwd_context.verify(plain_password, password_hash)
+
+
+def _hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db),
+) -> User:
+    token = credentials.credentials
+    try:
+        payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
+        user_id = payload.get("sub")
+    except JWTError as exc:
+        raise HTTPException(status_code=401, detail="invalid token") from exc
+    if not user_id:
+        raise HTTPException(status_code=401, detail="invalid token")
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=401, detail="user not found")
+    return user
+
+
+@app.on_event("startup")
+def on_startup() -> None:
+    Base.metadata.create_all(bind=engine)
+
+
 @app.post("/api/v1/auth/signup")
-def signup(req: SignupRequest):
-    if req.email in users_by_email:
+def signup(req: SignupRequest, db: Session = Depends(get_db)):
+    existing = db.query(User).filter(User.email == req.email).first()
+    if existing:
         raise HTTPException(status_code=400, detail="email already exists")
-    user_id = f"u_{uuid.uuid4().hex[:8]}"
-    user = {"id": user_id, "email": req.email, "displayName": req.displayName}
-    users[user_id] = user
-    users_by_email[req.email] = user_id
-    return ok({"user": user, "token": f"token-{user_id}"})
+    user = User(
+        id=f"u_{uuid.uuid4().hex[:8]}",
+        email=req.email,
+        display_name=req.displayName,
+        password_hash=_hash_password(req.password),
+    )
+    db.add(user)
+    db.commit()
+    token = _create_access_token(user.id)
+    return ok({"user": {"id": user.id, "email": user.email, "displayName": user.display_name}, "token": token})
 
 
 @app.post("/api/v1/auth/login")
-def login(req: LoginRequest):
-    user_id = users_by_email.get(req.email)
-    if not user_id:
+def login(req: LoginRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == req.email).first()
+    if not user or not _verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=401, detail="invalid credentials")
-    return ok({"user": users[user_id], "token": f"token-{user_id}"})
+    token = _create_access_token(user.id)
+    return ok({"user": {"id": user.id, "email": user.email, "displayName": user.display_name}, "token": token})
 
 
 @app.post("/api/v1/auth/oauth")
-def oauth(req: OAuthRequest):
-    user_id = f"u_{uuid.uuid4().hex[:8]}"
-    user = {"id": user_id, "email": None, "displayName": f"{req.provider}_user"}
-    users[user_id] = user
-    return ok({"user": user, "token": f"token-{user_id}"})
+def oauth(req: OAuthRequest, db: Session = Depends(get_db)):
+    email = f"{req.provider}_{uuid.uuid4().hex[:6]}@oauth.local"
+    user = User(
+        id=f"u_{uuid.uuid4().hex[:8]}",
+        email=email,
+        display_name=f"{req.provider}_user",
+        password_hash=_hash_password(uuid.uuid4().hex),
+    )
+    db.add(user)
+    db.commit()
+    token = _create_access_token(user.id)
+    return ok({"user": {"id": user.id, "email": user.email, "displayName": user.display_name}, "token": token})
 
 
 @app.post("/api/v1/auth/logout")
@@ -223,33 +245,24 @@ def logout():
 
 
 @app.get("/api/v1/auth/me")
-def me():
-    sample_user = next(iter(users.values()), {"id": "u_demo", "email": "demo@example.com", "displayName": "demo"})
-    return ok({"user": sample_user})
+def me(current_user: User = Depends(get_current_user)):
+    return ok({"user": {"id": current_user.id, "email": current_user.email, "displayName": current_user.display_name}})
 
 
 @app.get("/api/v1/home")
-def home():
+def home(current_user: User = Depends(get_current_user)):
     recs = random.sample(list(questions.values()), k=min(1, len(questions)))
     mapped = [{k: q.get(k) for k in ["questionId", "unitId", "questionType", "body"]} | {"unitTitle": units[q["unitId"]]["title"]} for q in recs]
-    return ok({"todayRecommendation": mapped, "streakDays": 0, "inProgressUnit": None, "latestBadges": []})
+    return ok({"todayRecommendation": mapped, "streakDays": 0, "inProgressUnit": None, "latestBadges": user_badges.get(current_user.id, [])[-3:]})
 
 
 @app.get("/api/v1/recommendations/today")
-def recommendations_today(count: int = 3):
+def recommendations_today(count: int = 3, current_user: User = Depends(get_current_user)):
+    _ = current_user
     count = max(1, min(10, count))
     all_q = list(questions.values())
     picks = random.sample(all_q, k=min(count, len(all_q)))
-    items = [
-        {
-            "questionId": q["questionId"],
-            "unitId": q["unitId"],
-            "unitTitle": units[q["unitId"]]["title"],
-            "questionType": q["questionType"],
-            "body": q["body"],
-        }
-        for q in picks
-    ]
+    items = [{"questionId": q["questionId"], "unitId": q["unitId"], "unitTitle": units[q["unitId"]]["title"], "questionType": q["questionType"], "body": q["body"]} for q in picks]
     return ok({"source": "random", "items": items})
 
 
@@ -275,18 +288,27 @@ def get_unit(unit_id: str):
 
 
 @app.post("/api/v1/units/{unit_id}/start")
-def start_unit(unit_id: str):
+def start_unit(unit_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     _unit_or_404(unit_id)
-    uid = "u_demo"
-    progress[(uid, unit_id)] = {"status": "in_progress", "currentStepOrder": 1, "currentStepType": "intro", "completedAt": None}
+    item = db.query(UserUnitProgress).filter(UserUnitProgress.user_id == current_user.id, UserUnitProgress.unit_id == unit_id).first()
+    if not item:
+        item = UserUnitProgress(user_id=current_user.id, unit_id=unit_id)
+        db.add(item)
+    item.status = "in_progress"
+    item.current_step_order = 1
+    item.current_step_type = "intro"
+    item.completed_at = None
+    db.commit()
     return ok({"unitId": unit_id, "status": "in_progress", "currentStepOrder": 1, "currentStepType": "intro"})
 
 
 @app.get("/api/v1/units/{unit_id}/progress")
-def unit_progress(unit_id: str):
+def unit_progress(unit_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     _unit_or_404(unit_id)
-    p = progress.get(("u_demo", unit_id), {"status": "not_started", "currentStepOrder": 1, "completedAt": None})
-    return ok({"unitId": unit_id, **p})
+    item = db.query(UserUnitProgress).filter(UserUnitProgress.user_id == current_user.id, UserUnitProgress.unit_id == unit_id).first()
+    if not item:
+        return ok({"unitId": unit_id, "status": "not_started", "currentStepOrder": 1, "completedAt": None})
+    return ok({"unitId": unit_id, "status": item.status, "currentStepOrder": item.current_step_order, "currentStepType": item.current_step_type, "completedAt": item.completed_at.isoformat() if item.completed_at else None})
 
 
 @app.get("/api/v1/units/{unit_id}/steps/{step_type}")
@@ -327,7 +349,7 @@ def get_hint(question_id: str, level: int):
 
 
 @app.post("/api/v1/units/{unit_id}/tests/submit")
-def submit_test(unit_id: str, req: TestSubmitRequest):
+def submit_test(unit_id: str, req: TestSubmitRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     _unit_or_404(unit_id)
     total = len(req.answers)
     if total == 0:
@@ -340,7 +362,15 @@ def submit_test(unit_id: str, req: TestSubmitRequest):
     score = round((correct / total) * 100, 2)
     passed = score >= 80
     if passed:
-        progress[("u_demo", unit_id)] = {"status": "completed", "currentStepOrder": 4, "currentStepType": "test", "completedAt": now_iso()}
+        item = db.query(UserUnitProgress).filter(UserUnitProgress.user_id == current_user.id, UserUnitProgress.unit_id == unit_id).first()
+        if not item:
+            item = UserUnitProgress(user_id=current_user.id, unit_id=unit_id)
+            db.add(item)
+        item.status = "completed"
+        item.current_step_order = 4
+        item.current_step_type = "test"
+        item.completed_at = datetime.utcnow()
+        db.commit()
     return ok({"scorePercent": score, "passThreshold": 80, "isPassed": passed, "nextAction": "passed" if passed else "go_review"})
 
 
@@ -371,9 +401,9 @@ def submit_review(unit_id: str, req: ReviewSubmitRequest):
 
 
 @app.get("/api/v1/progress/summary")
-def progress_summary():
-    completed = sum(1 for p in progress.values() if p["status"] == "completed")
-    in_progress = sum(1 for p in progress.values() if p["status"] == "in_progress")
+def progress_summary(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    completed = db.query(UserUnitProgress).filter(UserUnitProgress.user_id == current_user.id, UserUnitProgress.status == "completed").count()
+    in_progress = db.query(UserUnitProgress).filter(UserUnitProgress.user_id == current_user.id, UserUnitProgress.status == "in_progress").count()
     return ok({"completedUnits": completed, "inProgressUnits": in_progress, "streakDays": 0, "todaySolvedCount": 0})
 
 
@@ -383,8 +413,8 @@ def badges():
 
 
 @app.get("/api/v1/badges/me")
-def my_badges():
-    return ok(user_badges.get("u_demo", []))
+def my_badges(current_user: User = Depends(get_current_user)):
+    return ok(user_badges.get(current_user.id, []))
 
 
 @app.post("/api/v1/badges/evaluate")
